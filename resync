@@ -1,0 +1,104 @@
+#!/bin/bash
+
+###
+###  resync: lazy way to resync sources
+###
+
+# Necessary extra files
+declare -r ROOT="${HOME}/bin/romtools"
+declare -r DIRS="${ROOT}/resync.dirs"
+declare -r CMDS="${ROOT}/resync.post"
+
+# Set colors to be used for output
+declare -r red='\033[0;31m'
+declare -r green='\033[0;32m'
+declare -r yellow='\033[0;33m'
+declare -r blue='\033[0;34m'
+declare -r magenta='\033[0;35m'
+declare -r cyan='\033[0;36m'
+declare -r clear='\033[0m'
+
+fatal() {
+  printf '${red}\nFatal error: %s\n ${clear}' "$*$"
+  exit 1
+}
+
+firstrun() {
+  # Let the output of 'repo sync' tell us what to delete
+  printf "${cyan}First run of 'repo sync' to determine directories that need to be recloned\nThis may take a while..${clear}\n"
+  if repo sync -j"$(nproc --all)" --no-tags --no-clone-bundle --current-branch --force-sync &> "$DIRS" ; then
+    echo "${magenta}The first run of repo sync was successful. Skipping to applying source patches...\n${clear}"
+  fi
+  
+  # Remove the cruft and keep only the list of directories that need to be removed
+  sed -i '1,/Failing repos/d' "$DIRS"
+  sed -i '$d' "$DIRS"
+
+  rmdirs "$@"
+  return;
+}
+
+rmdirs() {
+  local -a _dirs
+  readarray -t _dirs < "${DIRS}"
+
+  # "rm -rf" every item in dirs array
+  for _dir in "${_dirs[@]}"; do
+    printf "${magenta}\nRemoving directory '${_dir}'${clear}"
+    if ! rm -rf "${_dir}"; then
+      fatal 'Failed to remove directory'
+    fi
+  done
+
+  sync "$@"
+  return
+}
+
+sync() {
+  # run sync
+  printf "${blue}\nSyncing sources\n${clear}"
+  if ! repo sync -j$(nproc --all) --no-tags --no-clone-bundle --current-branch --force-sync ; then
+    fatal 'Failed to sync'
+  fi
+
+  post "$@"
+  return
+}
+
+post() {
+  # read from cmds file
+  printf "${green}\nResyncing deleted directories\n${clear}"
+  if ! source "${CMDS}" $@; then
+    fatal "Failed to source ' (${CMDS})"
+  fi
+  mods "$@"
+  return
+}
+
+mods() {
+  for f in $(ls "${ROOT}" | grep '.mod'); do
+    printf "${magenta}Applying source patch '$f'...${clear}"
+      if ! source "${ROOT}/${f}"; then
+        fatal "Failed to source ' (${f})"
+      fi
+    printf "${cyan} Done.${clear}\n"
+  done 
+
+  return
+}
+
+main() {
+    if ! test -d "${ROOT}"; then
+    mkdir -p "${ROOT}"
+  fi
+  for i in $DIRS $CMDS; do
+    if ! test -f "$i"; then
+      touch "$i"
+    fi
+  done
+
+  firstrun "$@"
+  printf "${green}\nResync has finished successfully.\n${clear}"
+}
+
+main "$@"
