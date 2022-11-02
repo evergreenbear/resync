@@ -4,49 +4,62 @@
 ###  resync: lazy way to resync sources
 ###
 
-# Necessary extra files
+## set necessary permanent values
+# directories
 declare -r ROOT="${HOME}/bin/romtools"
+declare -r LOGS="${ROOT}logs"
+# files
 declare -r DIRS="${ROOT}/resync.dirs"
 declare -r CMDS="${ROOT}/resync.post"
 
-# Set colors to be used for output
+# set colors to be used for output
 declare -r red='\033[0;31m'
+declare -r redbold='\033[01;31m'
 declare -r green='\033[0;32m'
-declare -r yellow='\033[0;33m'
+declare -r greenbold='\033[01;32m'
 declare -r blue='\033[0;34m'
+declare -r bluebold='\033[01;34m'
 declare -r magenta='\033[0;35m'
+declare -r magentabold='\033[01;35m'
 declare -r cyan='\033[0;36m'
+declare -r cyanbold='\033[01;36m'
 declare -r clear='\033[0m'
 
 fatal() {
-  printf '${red}\nFatal error: %s\n ${clear}' "$*$"
+  printf "\n${redbold}Fatal error: ${red}%s\n ${clear}" "$*"
   exit 1
 }
 
 firstrun() {
-  # Let the output of 'repo sync' tell us what to delete
-  printf "${cyan}First run of 'repo sync' to determine directories that need to be recloned\nThis may take a while..${clear}\n"
+  # let the output of 'repo sync' tell us what to delete
+  printf "${cyanbold}>> ${cyan}First run of 'repo sync' to determine directories that need to be recloned\n${clear}"
   if repo sync -j"$(nproc --all)" --no-tags --no-clone-bundle --current-branch --force-sync &> "$DIRS" ; then
     echo "${magenta}The first run of repo sync was successful. Skipping to applying source patches...\n${clear}"
   fi
   
-  # Remove the cruft and keep only the list of directories that need to be removed
+  # remove the cruft and keep only the list of dirs that need to be removed
   sed -i '1,/Failing repos/d' "$DIRS"
   sed -i '$d' "$DIRS"
 
   rmdirs "$@"
-  return;
+  return
 }
 
 rmdirs() {
   local -a _dirs
   readarray -t _dirs < "${DIRS}"
 
-  # "rm -rf" every item in dirs array
+  # test if each dir exists, then "rm -rf" every item in dirs array
   for _dir in "${_dirs[@]}"; do
-    printf "${magenta}\nRemoving directory '${_dir}'${clear}"
-    if ! rm -rf "${_dir}"; then
-      fatal 'Failed to remove directory'
+    printf "${greenbold}>> ${green}Removing directory '${_dir}'${clear}\n"
+    if [[ -d "${_dir}" ]]; then
+      if rm -rf "${_dir}"; then
+        printf "${cyanbold}>> ${cyan}Removed directory '${_dir}'${clear}\n"
+      else
+        fatal "Failed to remove directory '${_dir}'"
+      fi
+    else
+      fatal "Directory '${_dir}' does not exist!"
     fi
   done
 
@@ -55,8 +68,8 @@ rmdirs() {
 }
 
 sync() {
-  # run sync
-  printf "${blue}\nSyncing sources\n${clear}"
+  # run the "real" sync command
+  printf "${bluebold}>> ${blue}Syncing sources\n${clear}"
   if ! repo sync -j$(nproc --all) --no-tags --no-clone-bundle --current-branch --force-sync ; then
     fatal 'Failed to sync'
   fi
@@ -66,16 +79,18 @@ sync() {
 }
 
 post() {
-  # read from cmds file
-  printf "${green}\nResyncing deleted directories\n${clear}"
+  # source cmds file
+  printf "${greenbold}>> ${green}Resyncing deleted directories\n${clear}"
   if ! source "${CMDS}" $@; then
     fatal "Failed to source ' (${CMDS})"
   fi
+
   mods "$@"
   return
 }
 
 mods() {
+  # source any file in DIRS ending in .mod
   for f in $(ls "${ROOT}" | grep '.mod'); do
     printf "${magenta}Applying source patch '$f'...${clear}"
       if ! source "${ROOT}/${f}"; then
@@ -88,7 +103,8 @@ mods() {
 }
 
 main() {
-    if ! test -d "${ROOT}"; then
+  # make needed files if they don't exist
+  if ! test -d "${ROOT}"; then
     mkdir -p "${ROOT}"
   fi
   for i in $DIRS $CMDS; do
@@ -97,8 +113,11 @@ main() {
     fi
   done
 
+  # get the script running
   firstrun "$@"
-  printf "${green}\nResync has finished successfully.\n${clear}"
+
+  # script has been ran
+  printf "\n${greenbold}>> ${green}Resync has finished successfully.\n${clear}"
 }
 
 main "$@"
