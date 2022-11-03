@@ -11,6 +11,7 @@ declare -r LOGS="${ROOT}logs"
 # files
 declare -r DIRS="${ROOT}/resync.dirs"
 declare -r CMDS="${ROOT}/resync.post"
+declare -r OPTS="${ROOT}/resync.opts"
 
 # set colors to be used for output
 declare -r red='\033[0;31m'
@@ -25,16 +26,68 @@ declare -r cyan='\033[0;36m'
 declare -r cyanbold='\033[01;36m'
 declare -r clear='\033[0m'
 
+# etc stuff
+declare sourceopts='yes'
+declare dopost='yes'
+
 fatal() {
   printf "\n${redbold}Fatal error: ${red}%s\n ${clear}" "$*"
   exit 1
+}
+
+usage() {
+cat <<EOF
+resync: automate syncing custom rom sources
+Usage: $0 [options]
+
+-h    show this usage text
+-s    skip running repo sync
+-o    skip syncing rom source optimizations
+-d    skip resyncing deleted directories
+
+version: 1.2
+EOF
+
+exit 0
+}
+
+args() {
+  while getopts ":sod" opts; do
+    case "${opts}" in
+      "s")
+        # skip to post
+        printf "${bluebold}>> ${blue}Argument '-s' given, skipping sync\n${clear}"
+        post && exit 0
+        ;;
+    
+      "o")
+        # let the script know to not apply source optimizations
+        printf "${bluebold}>> ${blue}Argument '-o' given, skipping source optimization\n${clear}"
+	declare sourceopts="no"
+        ;;
+
+      "d")
+        # do not reclone deleted directories
+        printf "${bluebold}>> ${blue}Argument '-d' given, skipping post-sync\n${clear}"
+	declare dopost="no"
+        ;;
+
+      *)
+        usage
+        ;;
+    esac
+  done
+
+  firstrun "$@"
+  return
 }
 
 firstrun() {
   # let the output of 'repo sync' tell us what to delete
   printf "${cyanbold}>> ${cyan}First run of 'repo sync' to determine directories that need to be recloned\n${clear}"
   if repo sync -j"$(nproc --all)" --no-tags --no-clone-bundle --current-branch --force-sync &> "$DIRS" ; then
-    echo "${magenta}The first run of repo sync was successful. Skipping to applying source patches...\n${clear}"
+    printf "${magenta}The first run of repo sync was successful. Skipping to applying source patches...\n${clear}"
+    exit 0
   fi
   
   # remove the cruft and keep only the list of dirs that need to be removed
@@ -79,17 +132,46 @@ sync() {
 }
 
 post() {
-  # source cmds file
-  printf "${greenbold}>> ${green}Resyncing deleted directories\n${clear}"
-  if ! source "${CMDS}" $@; then
-    fatal "Failed to source ' (${CMDS})"
-  fi
+  case "$dopost" in
+    "yes"|"y")
+      # source cmds file
+      printf "${greenbold}>> ${green}Resyncing deleted directories\n${clear}"
+      if ! source "${CMDS}" $@; then
+        fatal "Failed to source ' (${CMDS})"
+      fi
+
+      case "$sourceopts" in
+        "yes"|"y")
+          printf "${magentabold}>> ${magenta}Applying source optimizations\n${clear}"
+          if ! source "${OPTS}" $@; then
+            fatal "Failed to source ' (${OPTS})"
+          fi
+          printf "${magentabold}>> ${magenta}Done.\n${clear}"
+          ;;
+
+        "no"|"n")
+          # do nothing, don't source the opts
+          printf "${bluebold}>> ${blue}Skipping source optimizations.\n${clear}"
+          ;;
+
+        *)
+          fatal "Unable to tell if I should run source optimizations!"
+          ;;
+        esac
+      ;;
+    "no"|"n")
+      # do not resync deleted dirs
+     true
+     ;;
+  esac
 
   mods "$@"
   return
 }
 
 mods() {
+  printf "${cyanbold}>> ${cyan}Applying source patches\n${clear}"
+
   # source any file in DIRS ending in .mod
   for f in $(ls "${ROOT}" | grep '.mod'); do
     printf "${magenta}Applying source patch '$f'...${clear}"
@@ -107,14 +189,14 @@ main() {
   if ! test -d "${ROOT}"; then
     mkdir -p "${ROOT}"
   fi
-  for i in $DIRS $CMDS; do
+  for i in ${DIRS} ${CMDS} ${OPTS}; do
     if ! test -f "$i"; then
       touch "$i"
     fi
   done
 
   # get the script running
-  firstrun "$@"
+  args "$@"
 
   # script has been ran
   printf "\n${greenbold}>> ${green}Resync has finished successfully.\n${clear}"
